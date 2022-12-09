@@ -84,7 +84,7 @@ func ToV3(doc2 *openapi2.T) (*openapi3.T, error) {
 	if responses := doc2.Responses; len(responses) != 0 {
 		doc3.Components.Responses = make(map[string]*openapi3.ResponseRef, len(responses))
 		for k, response := range responses {
-			r, err := ToV3Response(response)
+			r, err := ToV3Response(response, doc2.Produces)
 			if err != nil {
 				return nil, err
 			}
@@ -155,6 +155,7 @@ func ToV3Operation(doc2 *openapi2.T, components *openapi3.Components, pathItem *
 		OperationID:    operation.OperationID,
 		Summary:        operation.Summary,
 		Description:    operation.Description,
+		Deprecated:     operation.Deprecated,
 		Tags:           operation.Tags,
 		ExtensionProps: operation.ExtensionProps,
 	}
@@ -192,7 +193,7 @@ func ToV3Operation(doc2 *openapi2.T, components *openapi3.Components, pathItem *
 	if responses := operation.Responses; responses != nil {
 		doc3Responses := make(openapi3.Responses, len(responses))
 		for k, response := range responses {
-			doc3, err := ToV3Response(response)
+			doc3, err := ToV3Response(response, operation.Produces)
 			if err != nil {
 				return nil, err
 			}
@@ -412,7 +413,7 @@ func onlyOneReqBodyParam(bodies []*openapi3.RequestBodyRef, formDataSchemas map[
 	return nil, nil
 }
 
-func ToV3Response(response *openapi2.Response) (*openapi3.ResponseRef, error) {
+func ToV3Response(response *openapi2.Response, produces []string) (*openapi3.ResponseRef, error) {
 	if ref := response.Ref; ref != "" {
 		return &openapi3.ResponseRef{Ref: ToV3Ref(ref)}, nil
 	}
@@ -421,8 +422,18 @@ func ToV3Response(response *openapi2.Response) (*openapi3.ResponseRef, error) {
 		Description:    &response.Description,
 		ExtensionProps: response.ExtensionProps,
 	}
+
+	// Default to "application/json" if "produces" is not specified.
+	if len(produces) == 0 {
+		produces = []string{"application/json"}
+	}
+
 	if schemaRef := response.Schema; schemaRef != nil {
-		result.WithJSONSchemaRef(ToV3SchemaRef(schemaRef))
+		schema := ToV3SchemaRef(schemaRef)
+		result.Content = make(openapi3.Content, len(produces))
+		for _, mime := range produces {
+			result.Content[mime] = openapi3.NewMediaType().WithSchemaRef(schema)
+		}
 	}
 	if headers := response.Headers; len(headers) > 0 {
 		result.Headers = ToV3Headers(headers)
@@ -474,6 +485,16 @@ func ToV3SchemaRef(schema *openapi3.SchemaRef) *openapi3.SchemaRef {
 	for i, v := range schema.Value.AllOf {
 		schema.Value.AllOf[i] = ToV3SchemaRef(v)
 	}
+	if val, ok := schema.Value.Extensions["x-nullable"]; ok {
+		var nullable bool
+
+		if err := json.Unmarshal(val.(json.RawMessage), &nullable); err == nil {
+			schema.Value.Nullable = nullable
+		}
+
+		delete(schema.Value.Extensions, "x-nullable")
+	}
+
 	return schema
 }
 
@@ -813,6 +834,11 @@ func FromV3SchemaRef(schema *openapi3.SchemaRef, components *openapi3.Components
 	for i, v := range schema.Value.AllOf {
 		schema.Value.AllOf[i], _ = FromV3SchemaRef(v, components)
 	}
+	if schema.Value.Nullable {
+		schema.Value.Nullable = false
+		schema.Value.Extensions["x-nullable"] = true
+	}
+
 	return schema, nil
 }
 
@@ -922,6 +948,7 @@ func FromV3Operation(doc3 *openapi3.T, operation *openapi3.Operation) (*openapi2
 		OperationID:    operation.OperationID,
 		Summary:        operation.Summary,
 		Description:    operation.Description,
+		Deprecated:     operation.Deprecated,
 		Tags:           operation.Tags,
 		ExtensionProps: operation.ExtensionProps,
 	}
