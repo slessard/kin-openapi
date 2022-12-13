@@ -190,6 +190,18 @@ func TestServersBasePath(t *testing.T) {
 			},
 			expected: "/b/LLLLL/a",
 		},
+		{
+			title: "URL set as a variable",
+			servers: Servers{&Server{
+				URL: "{var1}",
+				Variables: map[string]*ServerVariable{
+					"var1": {
+						Default: "http://example.com/b/l/a",
+					},
+				},
+			}},
+			expected: "/b/l/a",
+		},
 	} {
 		t.Run(testcase.title, func(t *testing.T) {
 			err := testcase.servers.Validate(context.Background())
